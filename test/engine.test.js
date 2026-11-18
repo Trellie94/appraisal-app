@@ -1,7 +1,7 @@
 // Checks the engine against the 1 Deburgh Road reference report. Run: npm test
 const assert = require('assert');
 const E = require('../src/engine.js'), S = require('../src/samples.js');
-const a = S.deburgh(), C = E.compute(a), r = Math.round;
+const a = require('../server/deburgh.js').deburgh(), C = E.compute(a), r = Math.round;
 const L = Object.values(C.loans)[0];
 const exact = { gdv: [C.gdv, 4479740], salesFees: [C.salesFees, 89595], construction: [C.construction, 1276000],
   buildCost: [C.buildCost, 1403600], profFees: [C.profFees, 105000], otherCosts: [C.otherCosts, 316000],

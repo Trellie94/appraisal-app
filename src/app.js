@@ -2,13 +2,56 @@
 const KEY = 'appraisal-demo-v1';
 let DB, view = { page: 'list' }, modal = null, box = null, A = null, C = null, R = [], dirty = false;
 
-function load() {
-  try { const s = localStorage.getItem(KEY); if (s) return JSON.parse(s); } catch (e) {}
-  return { developments: [{ id: Samples.id(), name: '1 Deburgh Road (reference check)', address: '1 Deburgh Road, London SW19 1DX',
-    description: 'Sample loaded from the reference report so the numbers can be compared line by line.', note: '',
-    appraisals: [Samples.deburgh()] }] };
+// ---------- Storage: database via /api, auto-saved ----------
+let synced = {}, timer = null, inflight = false, syncState = 'saved';
+const SYNC = { saved: 'All changes saved', saving: 'Saving…', error: 'Not saved, retrying…' };
+const snap = () => { const o = {}; DB.developments.forEach(d => { o[d.id] = JSON.stringify(d); }); return o; };
+const isDirty = () => { const now = snap(); return Object.keys(now).some(id => synced[id] !== now[id]) || Object.keys(synced).some(id => !(id in now)); };
+function setSync(s) { syncState = s; const el = document.getElementById('sync'); if (el) { el.textContent = SYNC[s]; el.className = 'sync small ' + s; } }
+async function api(path, opt) {
+  const r = await fetch(path, Object.assign({ credentials: 'same-origin', headers: { 'Content-Type': 'application/json' } }, opt));
+  if (r.status === 401) { showLogin(); throw new Error('auth'); }
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || 'Server error ' + r.status);
+  return body;
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} }
+function save() {
+  if (!DB || !isDirty()) return;
+  setSync('saving'); clearTimeout(timer); timer = setTimeout(flush, 800);
+}
+async function flush() {
+  if (inflight) { clearTimeout(timer); timer = setTimeout(flush, 300); return; }
+  inflight = true;
+  try {
+    const now = snap();
+    for (const id of Object.keys(now)) if (synced[id] !== now[id]) { await api('/api/data', { method: 'PUT', body: now[id] }); synced[id] = now[id]; }
+    for (const id of Object.keys(synced)) if (!(id in now)) { await api('/api/data?id=' + encodeURIComponent(id), { method: 'DELETE' }); delete synced[id]; }
+    inflight = false;
+    if (DB && isDirty()) { clearTimeout(timer); timer = setTimeout(flush, 300); } else setSync('saved');
+  } catch (e) {
+    inflight = false;
+    if (e.message !== 'auth') { setSync('error'); clearTimeout(timer); timer = setTimeout(flush, 5000); }
+  }
+}
+window.addEventListener('beforeunload', e => { if (DB && (syncState !== 'saved' || isDirty())) { flush(); e.preventDefault(); e.returnValue = ''; } });
+function showLogin(err) { DB = null; A = null; modal = null; box = null; view = { page: 'login', err: err || '' }; render(); }
+async function boot() {
+  view = { page: 'loading' }; render();
+  try {
+    DB = await api('/api/data'); synced = snap(); view = { page: 'list' }; offerUpload(); render();
+  } catch (e) { if (e.message !== 'auth') { view = { page: 'error', msg: e.message }; render(); } }
+}
+// Appraisals saved in this browser by the version before the database existed
+function offerUpload() {
+  let old; try { if (localStorage.getItem(KEY + '-uploaded')) return; old = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return; }
+  if (!old || !Array.isArray(old.developments)) return;
+  const names = new Set(DB.developments.map(d => d.name)), ids = new Set(DB.developments.map(d => d.id));
+  const add = old.developments.filter(d => d && d.id && !ids.has(d.id) && !(names.has(d.name) && /reference check/.test(d.name)));
+  const done = () => { try { localStorage.setItem(KEY + '-uploaded', '1'); } catch (e) {} };
+  if (!add.length) return done();
+  box = { msg: `This browser holds ${add.length} development${add.length === 1 ? '' : 's'} saved before the database was added (${add.map(d => d.name || 'Untitled').join(', ')}). Upload ${add.length === 1 ? 'it' : 'them'} to the database?`,
+    yes: 'Upload', no: 'Not now', fn: () => { DB.developments.push(...add); done(); } };
+}
 const dev = id => DB.developments.find(d => d.id === id);
 const ask = (msg, fn, yes) => { box = { msg, fn, yes: yes || 'Delete' }; };
 
@@ -73,7 +116,7 @@ function viewList() {
         <h3>${esc(d.name || 'Untitled Development')}</h3><p>${esc(d.description)}</p>
         <div class="row between small"><span>${esc(d.address)}</span><span>${d.appraisals.length} Appraisal${d.appraisals.length === 1 ? '' : 's'}</span></div></div>`).join('')
       || '<p class="muted">No developments yet. Use Create New to start.</p>'}</div>
-    <div class="row gap small muted" style="margin-top:32px">Saved in this browser.
+    <div class="row gap small muted" style="margin-top:32px">Saved automatically to the database.
       <button class="link" data-act="export">Export backup</button><button class="link" data-act="import">Import backup</button>
       <input type="file" id="importFile" accept=".json" hidden></div></div>`;
 }
@@ -316,15 +359,23 @@ function render() {
   const act = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.f : null;
   const sy = window.scrollY;
   R = []; dirty = false;
-  A = (view.page === 'appraisal' || view.page === 'report') ? dev(view.devId).appraisals.find(a => a.id === view.apId) : null;
+  A = DB && (view.page === 'appraisal' || view.page === 'report') ? dev(view.devId).appraisals.find(a => a.id === view.apId) : null;
   C = A ? Engine.compute(A) : null;
   let nav = `<header class="top noprint"><div class="row gap"><b class="brand" data-act="home">Appraisals</b>
     ${A ? `<button class="link" data-act="home">&larr; Developments</button><span class="tabs"><button class="tab ${view.page === 'appraisal' ? 'on' : ''}" data-act="tab" data-p="appraisal">Appraisal</button><button class="tab ${view.page === 'report' ? 'on' : ''}" data-act="tab" data-p="report">Report</button></span><span class="muted small">${esc(A.title)}</span>` : ''}</div>
-    <button class="btn" data-act="newDev">Create New</button></header>`;
-  let body = view.page === 'list' ? viewList() : view.page === 'report' ? viewReport() : viewAppraisal();
+    <div class="row gap"><span id="sync" class="sync small ${syncState}">${SYNC[syncState]}</span><button class="btn" data-act="newDev">Create New</button><button class="link" data-act="logout">Log out</button></div></header>`;
+  let body;
+  if (!DB) {
+    nav = '';
+    body = view.page === 'login' ? `<div class="gate"><div class="card"><h1>Appraisals</h1><p class="muted">Enter the password to continue.</p>
+        <input id="pw" type="password" class="txt" placeholder="Password" autocomplete="current-password" autofocus>
+        ${view.err ? `<p class="neg small">${esc(view.err)}</p>` : ''}<button class="btn" style="width:100%;margin-top:12px" data-act="login">${view.busy ? 'Checking…' : 'Log in'}</button></div></div>`
+      : view.page === 'error' ? `<div class="gate"><div class="card"><h1>Appraisals</h1><p class="neg">${esc(view.msg)}</p><button class="btn" data-act="retry">Try again</button></div></div>`
+      : '<div class="gate"><p class="muted">Loading…</p></div>';
+  } else body = view.page === 'list' ? viewList() : view.page === 'report' ? viewReport() : viewAppraisal();
   let m = '';
   if (modal) m = `<div class="overlay noprint">${modal.type === 'dev' ? viewDevModal(dev(modal.id)) : modal.type === 'group' ? groupModal() : loanModal()}</div>`;
-  if (box) m += `<div class="overlay top2 noprint"><div class="modal"><p style="margin-top:0">${esc(box.msg)}</p><div class="row gap end">${box.fn ? `<button class="btn grey" data-act="boxNo">Cancel</button><button class="btn red" data-act="boxYes">${esc(box.yes)}</button>` : '<button class="btn" data-act="boxNo">OK</button>'}</div></div></div>`;
+  if (box) m += `<div class="overlay top2 noprint"><div class="modal"><p style="margin-top:0">${esc(box.msg)}</p><div class="row gap end">${box.fn ? `<button class="btn grey" data-act="boxNo">${esc(box.no || 'Cancel')}</button><button class="btn ${/Delete|Remove/.test(box.yes) ? 'red' : ''}" data-act="boxYes">${esc(box.yes)}</button>` : '<button class="btn" data-act="boxNo">OK</button>'}</div></div></div>`;
   document.getElementById('app').innerHTML = nav + body + m;
   refresh();
   window.scrollTo(0, sy);
@@ -340,7 +391,7 @@ document.addEventListener('input', e => {
   const el = e.target;
   if (el.id === 'search') { const q = el.value.toLowerCase(); document.querySelectorAll('.card.dev').forEach(c => { c.style.display = c.dataset.search.includes(q) ? '' : 'none'; }); return; }
   if (el.dataset.f == null || el.tagName === 'SELECT') return;
-  applyField(el); refresh();
+  applyField(el); refresh(); save();
 });
 document.addEventListener('change', e => {
   const el = e.target;
@@ -350,7 +401,7 @@ document.addEventListener('change', e => {
   applyField(el); save();
   if (el.tagName === 'SELECT' || dirty) setTimeout(render, 0); else refresh();
 });
-document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.target.blur(); if (e.key === 'Escape' && (box || modal)) { if (box) box = null; else modal = null; render(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'pw') return actions.login(); if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.target.blur(); if (e.key === 'Escape' && (box || modal)) { if (box) box = null; else modal = null; render(); } });
 
 const line = () => ({ id: Samples.id(), name: '', basis: 'fixed', value: 0 });
 const actions = {
@@ -387,6 +438,16 @@ const actions = {
   delLoan(t) { const i = t.dataset.i; ask(`Remove the loan "${A.funding.loans[i].name}"?`, () => A.funding.loans.splice(i, 1), 'Remove'); },
   boxYes() { const b = box; box = null; if (b && b.fn) b.fn(); },
   boxNo() { box = null; },
+  login() {
+    const el = document.getElementById('pw'), pw = el ? el.value : ''; if (!pw || view.busy) return false;
+    view.busy = true; render();
+    fetch('/api/login', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) })
+      .then(async r => { if (r.ok) return boot(); const b = await r.json().catch(() => ({})); showLogin(b.error || 'Could not log in'); })
+      .catch(() => showLogin('Could not reach the server'));
+    return false;
+  },
+  logout() { const go = () => fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).finally(() => showLogin()); (syncState === 'saved' && !isDirty() ? Promise.resolve() : flush()).then(go); return false; },
+  retry() { boot(); return false; },
   export() { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(DB, null, 1)], { type: 'application/json' })); a.download = 'appraisals-backup.json'; a.click(); },
   import() { document.getElementById('importFile').click(); return false; }
 };
@@ -399,8 +460,13 @@ document.addEventListener('click', e => {
 });
 function importFile(el) {
   const f = el.files[0]; if (!f) return;
-  f.text().then(t => { const d = JSON.parse(t); if (!d || !Array.isArray(d.developments)) throw 0; ask('Replace everything saved in this browser with the backup?', () => { DB = d; view = { page: 'list' }; }, 'Replace'); render(); })
+  f.text().then(t => { const d = JSON.parse(t); if (!d || !Array.isArray(d.developments)) throw 0;
+    const inc = d.developments.filter(x => x && x.id && Array.isArray(x.appraisals)), have = new Set(DB.developments.map(x => x.id));
+    const upd = inc.filter(x => have.has(x.id)).length;
+    ask(`Import ${inc.length} development${inc.length === 1 ? '' : 's'} from the backup? ${upd ? upd + ' already in the database will be overwritten with the backup copy; ' : ''}nothing else is removed.`,
+      () => { inc.forEach(x => { const k = DB.developments.findIndex(y => y.id === x.id); k < 0 ? DB.developments.push(x) : DB.developments[k] = x; }); view = { page: 'list' }; }, 'Import'); render(); })
     .catch(() => { box = { msg: 'That file is not a valid backup.' }; render(); });
+  el.value = '';
 }
 
-DB = load(); render();
+boot();

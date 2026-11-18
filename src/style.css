@@ -67,3 +67,5 @@ input.name{border-color:transparent;padding-left:4px}input.name:hover{border-col
   section{break-inside:auto}h2,h3{break-after:avoid}.rt{break-inside:avoid}tr{break-inside:avoid}.chart{break-inside:avoid}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}@page{margin:16mm}}
 .chev{border:0;background:#f1f5f9;border-radius:6px;width:26px;height:26px;cursor:pointer;color:#334155;font-size:14px;flex:none;padding:0}.chev:hover{background:#e2e8f0}
 .overlay.top2{z-index:20}.btn.red{background:#b91c1c}h2.row{display:flex}
+.gate{min-height:80vh;display:flex;align-items:center;justify-content:center;padding:20px}.gate .card{width:340px;max-width:100%}.gate h1{margin-bottom:6px;color:#0f766e}.gate input{margin-top:10px}
+.sync{color:#64748b}.sync.saving{color:#b45309}.sync.error{color:#b91c1c;font-weight:600}

@@ -1,10 +1,17 @@
 {
   "name": "appraisal-app",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "Property development appraisal web app",
   "scripts": {
     "build": "sh build.sh",
-    "test": "node test/engine.test.js"
+    "test": "node test/engine.test.js",
+    "dev": "sh build.sh && APP_PASSWORD=test node dev-server.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.2.1"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }
